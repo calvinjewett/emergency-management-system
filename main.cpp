@@ -16,19 +16,23 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include "graph.h"
+#include "hospital.h"
+#include "priorityqueue.h"
+#include <unordered_map>
+#include "patient.h"
 
 using namespace std;
 
-// TODO: Include your header files here
-// #include "Graph.h"
-// #include "PriorityQueue.h"
-// #include "Hospital.h"
+// Global data structures
+Graph hospitalGraph;
+vector<Hospital> hospitals;
+unordered_map<string, int> cityIndex;
 
-// TODO: Define your global data structures here
-// - Graph representing the hospital network
-// - Container for hospitals (each with its priority queue)
-// - Any other necessary data structures
+// Precomputed distances: 5x5 matrix
+vector<vector<int>> shortestDistances;
 
+using namespace std;
 
 /*
  * Initialize the hospital network graph with the 5 cities and their connections.
@@ -44,12 +48,40 @@ using namespace std;
  * - Colfax <-> Spokane: 50 miles
  */
 void initializeNetwork() {
-    // TODO: Initialize your graph with cities and edges
-    // TODO: Initialize all hospitals as OPEN
-    // TODO: If pre-computing shortest paths, do it here using your MA3 Dijkstra's implementation
-    
+    // Step 1: Define cities
+    vector<string> cityNames = {
+        "Pullman", "Moscow", "Colfax", "Lewiston", "Spokane"
+    };
+
+    // Step 2: Add cities to graph & index map
+    for (size_t i = 0; i < cityNames.size(); i++) {
+        hospitalGraph.addCity(cityNames[i]);
+        cityIndex[cityNames[i]] = i;
+        hospitals.push_back(Hospital(cityNames[i]));
+    }
+
+    // Step 3: Add all graph connections
+    hospitalGraph.addConnection("Pullman", "Moscow", 8);
+    hospitalGraph.addConnection("Pullman", "Colfax", 17);
+    hospitalGraph.addConnection("Pullman", "Lewiston", 30);
+    hospitalGraph.addConnection("Moscow", "Lewiston", 32);
+    hospitalGraph.addConnection("Moscow", "Spokane", 85);
+    hospitalGraph.addConnection("Colfax", "Spokane", 50);
+
+    // Step 4: Precompute all shortest paths
+    int n = cityNames.size();
+    shortestDistances.assign(n, vector<int>(n, INT_MAX));
+
+    for (int i = 0; i < n; i++) {
+        auto distMap = hospitalGraph.dijkstra(cityNames[i]);
+        for (int j = 0; j < n; j++) {
+            shortestDistances[i][j] = distMap[cityNames[j]];
+        }
+    }
+
     cout << "Hospital network initialized." << endl;
 }
+
 
 
 /*
@@ -61,18 +93,38 @@ void initializeNetwork() {
  * @param city - City where emergency occurred
  */
 void handleEmergency(const string& name, int severity, const string& city) {
-    // TODO: Find the nearest OPEN hospital to the given city
-    // - If the city's hospital is open, use it
-    // - If closed, use Dijkstra's (or pre-computed distances) to find nearest open hospital
-    
-    // TODO: Add patient to the hospital's priority queue
-    // - Patient should include: name, severity, original city
-    
-    // TODO: Print confirmation message
-    // Example: "Patient John Doe (severity 8) from Pullman admitted to Moscow hospital."
-    
-    cout << "TODO: Implement emergency command" << endl;
+    if (cityIndex.find(city) == cityIndex.end()) {
+        cout << "Error: Unknown city " << city << endl;
+        return;
+    }
+
+    int originIndex = cityIndex[city];
+    int bestHospital = -1;
+    int bestDistance = INT_MAX;
+
+    for (size_t i = 0; i < hospitals.size(); i++) {
+        if (hospitals[i].getStatus() == OPEN) {
+            int dist = shortestDistances[originIndex][i]; 
+            if (dist < bestDistance) {
+                bestDistance = dist;
+                bestHospital = i;
+            }
+        }
+    }
+
+    if (bestHospital == -1) {
+        cout << "Error: No open hospitals available!" << endl;
+        return;
+    }
+
+    Patient p{name, severity, city};
+    hospitals[bestHospital].addPatient(p);
+
+    cout << "Patient " << name << " (severity " << severity << ") from "
+         << city << " admitted to " << hospitals[bestHospital].getCity()
+         << " hospital." << endl;
 }
+
 
 
 /*
@@ -82,16 +134,46 @@ void handleEmergency(const string& name, int severity, const string& city) {
  * @param city - City whose hospital to close
  */
 void handleHospitalClose(const string& city) {
-    // TODO: Mark the hospital as CLOSED
-    
-    // TODO: If hospital has patients, transfer them to nearest open hospital
-    // - Find nearest open hospital using Dijkstra's or pre-computed distances
-    // - Merge the priority queues (this is where efficient merge is important!)
-    
-    // TODO: Print confirmation message
-    // Example: "Pullman hospital closed. 3 patients transferred to Moscow hospital."
-    
-    cout << "TODO: Implement hospital close command" << endl;
+    if (cityIndex.find(city) == cityIndex.end()) {
+        cout << "Error: Unknown city " << city << endl;
+        return;
+    }
+
+    size_t closingIndex = cityIndex[city];
+    Hospital& closingHospital = hospitals[closingIndex];
+
+    if (closingHospital.getStatus() == CLOSED) {
+        cout << city << " hospital is already closed." << endl;
+        return;
+    }
+
+    // Find nearest OPEN hospital to transfer to
+    int bestIndex = -1;
+    int bestDist = INT_MAX;
+
+    for (size_t i = 0; i < hospitals.size(); i++) {
+        if (i != closingIndex && hospitals[i].getStatus() == OPEN) {
+            int dist = shortestDistances[closingIndex][i];
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestIndex = i;
+            }
+        }
+    }
+
+    if (bestIndex == -1) {
+        cout << "Error: Cannot close the last open hospital!" << endl;
+        return;
+    }
+
+    int transferred = closingHospital.numPatients();
+
+    hospitals[bestIndex].mergePatients(closingHospital);
+    closingHospital.setStatus(CLOSED);
+
+    cout << city << " hospital closed. "
+         << transferred << " patients transferred to "
+         << hospitals[bestIndex].getCity() << " hospital." << endl;
 }
 
 
@@ -102,12 +184,21 @@ void handleHospitalClose(const string& city) {
  * @param city - City whose hospital to reopen
  */
 void handleHospitalOpen(const string& city) {
-    // TODO: Mark the hospital as OPEN
-    
-    // TODO: Print confirmation message
-    // Example: "Pullman hospital is now open."
-    
-    cout << "TODO: Implement hospital open command" << endl;
+    if (cityIndex.find(city) == cityIndex.end()) {
+        cout << "Error: Unknown city " << city << endl;
+        return;
+    }
+
+    int idx = cityIndex[city];
+    Hospital& h = hospitals[idx];
+
+    if (h.getStatus() == OPEN) {
+        cout << city << " hospital is already open." << endl;
+        return;
+    }
+
+    h.setStatus(OPEN);
+    cout << city << " hospital is now open." << endl;
 }
 
 
@@ -118,16 +209,28 @@ void handleHospitalOpen(const string& city) {
  * @param city - City whose hospital should treat next patient
  */
 void handleTreat(const string& city) {
-    // TODO: Check if hospital is open
-    
-    // TODO: Extract highest priority patient from the queue (extractMax)
-    
-    // TODO: Print patient information
-    // Example: "Treating Alice Smith (severity 9) originally from Pullman at Moscow hospital."
-    
-    // TODO: Handle edge cases (hospital closed, no patients)
-    
-    cout << "TODO: Implement treat command" << endl;
+    if (cityIndex.find(city) == cityIndex.end()) {
+        cout << "Error: Unknown city " << city << endl;
+        return;
+    }
+
+    int idx = cityIndex[city];
+    Hospital& h = hospitals[idx];
+
+    if (h.getStatus() == CLOSED) {
+        cout << city << " hospital is CLOSED and cannot treat patients." << endl;
+        return;
+    }
+
+    if (!h.hasPatients()) {
+        cout << "No patients to treat at " << city << " hospital." << endl;
+        return;
+    }
+
+    Patient p = h.treatNext();
+    cout << "Treating " << p.name << " (severity " << p.severity
+         << ") originally from " << p.originCity
+         << " at " << city << " hospital." << endl;
 }
 
 
@@ -142,22 +245,29 @@ void handleTreat(const string& city) {
  * - Next patient info (if any): name, severity, original city
  */
 void handleStatus() {
-    // TODO: Loop through all hospitals
-    
-    // TODO: For each hospital, display:
-    // - Hospital name/city
-    // - Status (OPEN or CLOSED)
-    // - Number of patients waiting
-    // - If patients waiting, show next patient (highest priority)
-    
-    // Example output format:
-    // Hospital: Pullman, WA
-    // Status: OPEN
-    // Patients Waiting: 2
-    // Next Patient: Alice Smith, Severity: 9, From: Pullman
-    
-    cout << "TODO: Implement status command" << endl;
+    cout << "\n=== Hospital Status ===" << endl;
+
+    for (const Hospital& hospital : hospitals) {
+        cout << "Hospital: " << hospital.getCity() << endl;
+
+        if (hospital.getStatus() == OPEN)
+            cout << "Status: OPEN" << endl;
+        else
+            cout << "Status: CLOSED" << endl;
+
+        cout << "Patients Waiting: " << hospital.numPatients() << endl;
+
+        if (hospital.hasPatients()) {
+            const Patient& next = hospital.peekNext();
+            cout << "Next Patient: " << next.name
+                 << ", Severity: " << next.severity
+                 << ", From: " << next.originCity << endl;
+        }
+
+        cout << endl;
+    }
 }
+
 
 
 /*
